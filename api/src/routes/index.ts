@@ -1,0 +1,81 @@
+import { Router } from "express";
+import authRoutes from "@/modules/auth/auth.routes";
+import candidateAuthRoutes from "@/modules/candidateAuth/candidateAuth.routes";
+import cvRoutes from "@/modules/cv/cv.routes";
+import publicJobPostingsRoutes from "@/modules/jobPostings/publicJobPostings.routes";
+import publicCandidatesRoutes from "@/modules/publicCandidates/publicCandidates.routes";
+import publicCompaniesRoutes from "@/modules/publicCompanies/publicCompanies.routes";
+import applyToJobPostingRoutes from "@/modules/jobApplications/applyToJobPosting.routes";
+import candidateJobApplicationsRoutes from "@/modules/jobApplications/candidateJobApplications.routes";
+import candidateNotificationsRoutes from "@/modules/candidateNotifications/candidateNotifications.routes";
+import candidatePhotoRoutes from "@/modules/candidateAuth/photo/photo.routes";
+import candidateConversationsRoutes from "@/modules/conversations/candidateConversations.routes";
+import clickNotificationRoutes from "@/modules/candidateNotifications/clickNotification.routes";
+import companiesRoutes from "@/modules/companies/companies.routes";
+import analysisDetailRoutes from "@/modules/analyses/analysisDetail.routes";
+import contactRoutes from "@/modules/contact/contact.routes";
+import employeeDetailRoutes from "@/modules/hr/employees/employeeDetail.routes";
+import jobPositionDetailRoutes from "@/modules/hr/jobPositions/jobPositionDetail.routes";
+import clientDetailRoutes from "@/modules/invoicing/clients/clientDetail.routes";
+import productDetailRoutes from "@/modules/invoicing/products/productDetail.routes";
+import documentDetailRoutes from "@/modules/invoicing/documents/documentDetail.routes";
+import adminUsersRoutes from "@/modules/admin/users/adminUsers.routes";
+import adminConversationReportsRoutes from "@/modules/admin/conversationReports/adminConversationReports.routes";
+import fixedAssetDetailRoutes from "@/modules/fixedAssets/assets/assetDetail.routes";
+import treasuryEntryDetailRoutes from "@/modules/treasury/entries/entryDetail.routes";
+import treasuryBudgetLineDetailRoutes from "@/modules/treasury/budget/budgetLineDetail.routes";
+import incomeBudgetLineDetailRoutes from "@/modules/accounting/incomeBudget/incomeBudgetLineDetail.routes";
+import businessPlanDetailRoutes from "@/modules/businessPlan/plan/planDetail.routes";
+import accountDetailRoutes from "@/modules/accounting/chartOfAccounts/accountDetail.routes";
+import accountLedgerRoutes from "@/modules/accounting/chartOfAccounts/accountLedger.routes";
+import journalEntryDetailRoutes from "@/modules/accounting/journalEntries/entryDetail.routes";
+import supplierDetailRoutes from "@/modules/purchasing/suppliers/supplierDetail.routes";
+import purchaseDocumentDetailRoutes from "@/modules/purchasing/documents/purchaseDocumentDetail.routes";
+import notificationsRoutes from "@/modules/notifications/notifications.routes";
+import groupDashboardRoutes from "@/modules/companies/groupDashboard/groupDashboard.routes";
+import statementLineDetailRoutes from "@/modules/treasury/reconciliation/statementLineDetail.routes";
+
+const router = Router();
+
+router.get("/health", (_req, res) => res.json({ status: "ok" }));
+
+router.use("/auth", authRoutes);
+router.use("/candidate-auth", candidateAuthRoutes);
+router.use("/candidate/cvs", cvRoutes);
+router.use("/job-postings", publicJobPostingsRoutes);
+router.use("/candidates", publicCandidatesRoutes);
+router.use("/companies-directory", publicCompaniesRoutes);
+router.use(
+  "/candidate/job-postings/:jobPostingId/apply",
+  applyToJobPostingRoutes,
+);
+router.use("/candidate/applications", candidateJobApplicationsRoutes);
+router.use("/candidate/notifications", candidateNotificationsRoutes);
+router.use("/candidate/photo", candidatePhotoRoutes);
+router.use("/candidate/conversations", candidateConversationsRoutes);
+router.use("/candidate-notifications", clickNotificationRoutes);
+router.use("/companies", companiesRoutes);
+router.use("/analyses", analysisDetailRoutes);
+router.use("/contact", contactRoutes);
+router.use("/employees", employeeDetailRoutes);
+router.use("/job-positions", jobPositionDetailRoutes);
+router.use("/clients", clientDetailRoutes);
+router.use("/products", productDetailRoutes);
+router.use("/documents", documentDetailRoutes);
+router.use("/admin/users", adminUsersRoutes);
+router.use("/admin/conversation-reports", adminConversationReportsRoutes);
+router.use("/fixed-assets", fixedAssetDetailRoutes);
+router.use("/treasury/entries", treasuryEntryDetailRoutes);
+router.use("/treasury/budget", treasuryBudgetLineDetailRoutes);
+router.use("/accounting/income-budget", incomeBudgetLineDetailRoutes);
+router.use("/business-plans", businessPlanDetailRoutes);
+router.use("/accounting/chart-of-accounts", accountDetailRoutes);
+router.use("/accounting/chart-of-accounts", accountLedgerRoutes);
+router.use("/accounting/journal-entries", journalEntryDetailRoutes);
+router.use("/suppliers", supplierDetailRoutes);
+router.use("/purchase-documents", purchaseDocumentDetailRoutes);
+router.use("/notifications", notificationsRoutes);
+router.use("/group-dashboard", groupDashboardRoutes);
+router.use("/treasury/reconciliation/lines", statementLineDetailRoutes);
+
+export default router;

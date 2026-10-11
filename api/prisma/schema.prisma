@@ -1,0 +1,1702 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER
+  ADMIN
+  SUPERADMIN
+}
+
+/// Rôle d'un utilisateur AU SEIN d'une entreprise donnée — distinct du rôle
+/// plateforme (Role). ADMIN gère l'entreprise (paramètres, personnel, finance,
+/// membres) ; MEMBER peut uniquement créer/gérer devis, factures et bons de
+/// livraison de cette entreprise.
+enum CompanyRole {
+  ADMIN
+  MEMBER
+}
+
+model User {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String?  @map("password_hash") // optionnel : un compte créé via Google n'a pas de mot de passe local
+  fullName      String?  @map("full_name")
+  role          Role     @default(USER)
+  emailVerified Boolean  @default(false) @map("email_verified")
+  googleId      String?  @unique @map("google_id")
+  authProvider  String   @default("local") @map("auth_provider") // "local" | "google"
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  companies          Company[]
+  companyMemberships CompanyMember[]
+  createdDocuments   SalesDocument[] @relation("DocumentCreator")
+  createdPurchaseDocuments PurchaseDocument[] @relation("PurchaseDocumentCreator")
+  createdFixedAssets FixedAsset[]    @relation("FixedAssetCreator")
+  createdTreasuryEntries TreasuryEntry[] @relation("TreasuryEntryCreator")
+  createdJournalEntries JournalEntry[] @relation("JournalEntryCreator")
+  auditLogs AuditLog[]
+  createdContractAmendments ContractAmendment[] @relation("ContractAmendmentCreator")
+  closedFiscalYears FiscalYearClosing[] @relation("FiscalYearCloser")
+  createdBusinessPlans BusinessPlan[] @relation("BusinessPlanCreator")
+  createdJobPostings JobPosting[] @relation("JobPostingCreator")
+  sentMessages Message[]
+  conversationReports ConversationReport[]
+  verificationTokens VerificationToken[]
+
+  @@map("users")
+}
+
+/// Jetons à usage unique pour la vérification d'email et la réinitialisation de
+/// mot de passe. Seul le hash du jeton est stocké (jamais la valeur brute
+/// envoyée par email) — même principe que les mots de passe : si la base fuite,
+/// les jetons ne sont pas directement exploitables.
+model VerificationToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  tokenHash String   @unique @map("token_hash")
+  type      String   // "EMAIL_VERIFICATION" | "PASSWORD_RESET"
+  expiresAt DateTime @map("expires_at")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type])
+  @@map("verification_tokens")
+}
+
+model Company {
+  id               String   @id @default(uuid())
+  userId           String   @map("user_id")
+  name             String
+  country          String   @default("Côte d'Ivoire")
+  currency         String   @default("XOF")
+  sector           String?
+  address          String?
+  accountingSystem String   @default("Normal") @map("accounting_system") // Normal | SMT
+  fiscalRegime     String?  @map("fiscal_regime")
+  logoUrl          String?  @map("logo_url") // chemin relatif sous /uploads (ex: "logos/{companyId}.png") — intégré dans les documents PDF (factures, bulletins, contrats, business plan, états financiers)
+  /// Opt-in pour l'annuaire public d'entreprises — mêmes valeurs que
+  /// CandidateCv.visibility pour rester cohérent, mais ici PAS de noindex
+  /// côté frontend : un profil entreprise publié a une valeur marketing à
+  /// être indexé, contrairement aux données personnelles d'un CV candidat.
+  directoryVisibility String @default("Brouillon") @map("directory_visibility") // "Brouillon" | "Public"
+  publicDescription   String? @db.Text @map("public_description")
+  createdAt        DateTime @default(now()) @map("created_at")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  user         User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  analyses     Analysis[]
+  employees    Employee[]
+  jobPositions JobPosition[]
+  clients          Client[]
+  products         Product[]
+  salesDocuments   SalesDocument[]
+  suppliers        Supplier[]
+  purchaseDocuments PurchaseDocument[]
+  purchaseDocumentSequences PurchaseDocumentSequence[]
+  invoicingSettings InvoicingSettings?
+  documentSequences DocumentSequence[]
+  chartOfAccounts   ChartOfAccount[]
+  auditLogs         AuditLog[]
+  bankStatementLines BankStatementLine[]
+  fiscalYears        FiscalYearClosing[]
+  journalEntries    JournalEntry[]
+  journalEntrySequences JournalEntrySequence[]
+  jobPostings       JobPosting[]
+  applicationNotifications CompanyApplicationNotification[]
+  conversationParticipations ConversationParticipant[]
+  members          CompanyMember[]
+  fixedAssets       FixedAsset[]
+  assetMovements    AssetMovement[]
+  fixedAssetSettings FixedAssetSettings?
+  treasuryEntries   TreasuryEntry[]
+  treasuryBudgetLines TreasuryBudgetLine[]
+  incomeBudgetLines IncomeBudgetLine[]
+  treasurySettings  TreasurySettings?
+  businessPlans     BusinessPlan[]
+  taxSettings       TaxSettings?
+  monthlyVatReturns MonthlyVatReturn[]
+  corporateTaxReturns CorporateTaxReturn[]
+  businessLicenseReturns BusinessLicenseReturn[]
+  monthlyPayrollTaxes MonthlyPayrollTax[]
+
+  @@index([userId])
+  @@map("companies")
+}
+
+/// Adhésion d'un utilisateur à une entreprise. Le créateur de l'entreprise reçoit
+/// automatiquement une ligne ADMIN ; un ADMIN peut ensuite créer d'autres
+/// utilisateurs et les rattacher ici (par défaut en MEMBER).
+model CompanyMember {
+  id        String      @id @default(uuid())
+  companyId String      @map("company_id")
+  userId    String      @map("user_id")
+  role      CompanyRole @default(MEMBER)
+  createdAt DateTime    @default(now()) @map("created_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, userId])
+  @@index([userId])
+  @@map("company_members")
+}
+
+enum AnalysisStatus {
+  draft
+  completed
+}
+
+model Analysis {
+  id             String         @id @default(uuid())
+  companyId      String         @map("company_id")
+  label          String
+  exerciceNDate  DateTime       @map("exercice_n_date")
+  exerciceN1Date DateTime?      @map("exercice_n1_date")
+  analystName    String?        @map("analyst_name")
+  status         AnalysisStatus @default(draft)
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  company      Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  balanceLines BalanceLine[]
+  result       AnalysisResult?
+
+  @@index([companyId])
+  @@map("analyses")
+}
+
+model BalanceLine {
+  id            String   @id @default(uuid())
+  analysisId    String   @map("analysis_id")
+  accountNumber String   @map("account_number")
+  label         String?
+  debitN        Decimal  @default(0) @map("debit_n") @db.Decimal(18, 2)
+  creditN       Decimal  @default(0) @map("credit_n") @db.Decimal(18, 2)
+  debitN1       Decimal  @default(0) @map("debit_n1") @db.Decimal(18, 2)
+  creditN1      Decimal  @default(0) @map("credit_n1") @db.Decimal(18, 2)
+  lineOrder     Int      @default(0) @map("line_order")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  analysis Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  @@index([analysisId])
+  @@index([accountNumber])
+  @@map("balance_lines")
+}
+
+model AnalysisResult {
+  analysisId String   @id @map("analysis_id")
+  results    Json
+  computedAt DateTime @default(now()) @updatedAt @map("computed_at")
+
+  analysis Analysis @relation(fields: [analysisId], references: [id], onDelete: Cascade)
+
+  @@map("analysis_results")
+}
+
+model ContactMessage {
+  id        String   @id @default(uuid())
+  fullName  String   @map("full_name")
+  email     String
+  subject   String
+  message   String
+  isRead    Boolean  @default(false) @map("is_read")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("contact_messages")
+}
+
+// ==================== MODULE GESTION DU PERSONNEL ====================
+
+model Employee {
+  id             String   @id @default(uuid())
+  companyId      String   @map("company_id")
+  code           String
+  fullName       String   @map("full_name")
+  position       String
+  department     String
+  employmentType String   @map("employment_type")
+  grossSalary    Decimal  @map("gross_salary") @db.Decimal(14, 2)
+  hireDate       DateTime @map("hire_date")
+  contractType   String   @map("contract_type")
+  gender         String
+  city           String?
+  phone          String?
+  email          String?
+  status         String   @default("Actif")
+  // Champs optionnels dédiés à la génération du contrat de travail — laissés
+  // vides tant qu'un contrat n'a pas besoin d'être imprimé, jamais requis pour
+  // les autres fonctionnalités RH (paie, présences...).
+  workLocation      String?   @map("work_location") // lieu d'exécution du contrat
+  weeklyHours       Decimal?  @map("weekly_hours") @db.Decimal(4, 1) // durée hebdomadaire de travail
+  trialPeriodMonths Int?      @map("trial_period_months") // durée de la période d'essai
+  contractEndDate   DateTime? @map("contract_end_date") // pertinent pour un CDD
+  managerId      String?  @map("manager_id") // organigramme — supérieur hiérarchique direct
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  company           Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  manager           Employee?          @relation("EmployeeManager", fields: [managerId], references: [id], onDelete: SetNull)
+  directReports     Employee[]         @relation("EmployeeManager")
+  attendanceRecords AttendanceRecord[]
+  latenessRecords   LatenessRecord[]
+  workedHours       WorkedHours[]
+  payrolls          Payroll[]
+  leaveRequests     LeaveRequest[]
+  contractAmendments ContractAmendment[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@map("employees")
+}
+
+model JobPosition {
+  id         String   @id @default(uuid())
+  companyId  String   @map("company_id")
+  code       String
+  title      String
+  department String
+  category   String
+  salaryMin  Decimal  @map("salary_min") @db.Decimal(14, 2)
+  salaryMax  Decimal  @map("salary_max") @db.Decimal(14, 2)
+  mainTasks  String?  @map("main_tasks")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@map("job_positions")
+}
+
+model AttendanceRecord {
+  id           String   @id @default(uuid())
+  employeeId   String   @map("employee_id")
+  date         DateTime
+  status       String
+  reason       String?  @map("absence_reason")
+  daysPresent  Int      @map("days_present")
+  daysWorkable Int      @map("days_workable")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@map("attendance_records")
+}
+
+model LatenessRecord {
+  id            String   @id @default(uuid())
+  employeeId    String   @map("employee_id")
+  date          DateTime
+  scheduledTime String   @map("scheduled_time")
+  arrivalTime   String   @map("arrival_time")
+  lateMinutes   Int      @map("late_minutes")
+  reason        String?
+  status        String
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@map("lateness_records")
+}
+
+model WorkedHours {
+  id               String   @id @default(uuid())
+  employeeId       String   @map("employee_id")
+  periodDate       DateTime @map("period_date")
+  contractualHours Decimal  @map("contractual_hours") @db.Decimal(6, 2)
+  actualHours      Decimal  @map("actual_hours") @db.Decimal(6, 2)
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, periodDate])
+  @@index([employeeId])
+  @@map("worked_hours")
+}
+
+model Payroll {
+  id                 String    @id @default(uuid())
+  employeeId         String    @map("employee_id")
+  periodDate         DateTime  @map("period_date")
+  grossSalary        Decimal   @map("gross_salary") @db.Decimal(14, 2)
+  bonus              Decimal   @default(0) @db.Decimal(14, 2)
+  latePenalty        Decimal   @default(0) @map("late_penalty") @db.Decimal(14, 2)
+  socialContribution Decimal   @map("social_contribution") @db.Decimal(14, 2)
+  paymentStatus      String    @default("En attente") @map("payment_status")
+  paymentDate        DateTime? @map("payment_date")
+  createdAt          DateTime  @default(now()) @map("created_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@unique([employeeId, periodDate])
+  @@index([employeeId])
+  @@map("payrolls")
+}
+
+model LeaveRequest {
+  id           String   @id @default(uuid())
+  employeeId   String   @map("employee_id")
+  leaveType    String   @map("leave_type")
+  startDate    DateTime @map("start_date")
+  endDate      DateTime @map("end_date")
+  numberOfDays Int      @map("number_of_days")
+  status       String   @default("En attente")
+  notes        String?
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  employee Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+
+  @@index([employeeId])
+  @@map("leave_requests")
+}
+
+// ==================== MODULE FACTURATION & INVENTAIRE ====================
+
+/// Paramètres commerciaux d'une entreprise (1-1), séparés du profil Company
+/// pour ne pas alourdir le modèle central avec des champs propres à la facturation.
+model InvoicingSettings {
+  companyId               String   @id @map("company_id")
+  tvaRatePercent           Decimal  @default(18) @map("tva_rate_percent") @db.Decimal(5, 2)
+  quoteValidityDays        Int      @default(30) @map("quote_validity_days")
+  paymentTermsDays         Int      @default(30) @map("payment_terms_days")
+  latePenaltyRatePercent   Decimal  @default(1.5) @map("late_penalty_rate_percent") @db.Decimal(5, 2)
+  cashDiscountRatePercent  Decimal  @default(0) @map("cash_discount_rate_percent") @db.Decimal(5, 2)
+  vatMention               String?  @map("vat_mention")
+  paymentConditions        String?  @map("payment_conditions")
+  deliveryConditions       String?  @map("delivery_conditions")
+  legalMention             String?  @map("legal_mention")
+  warranty                 String?
+  bankDetails              String?  @map("bank_details")
+  updatedAt                DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("invoicing_settings")
+}
+
+model Client {
+  id        String   @id @default(uuid())
+  companyId String   @map("company_id")
+  code      String   // ex: CLI-001
+  name      String
+  type      String   // Entreprise | Particulier
+  address   String?
+  phone     String?
+  email     String?
+  rccm      String?
+  quality   String   @default("Nouveau") // Nouveau | Bon | Excellent
+  creditLimit Decimal? @map("credit_limit") @db.Decimal(14, 2) // encours maximum autorisé — null = aucune limite (comportement historique préservé)
+  defaultDiscountPercent Decimal? @map("default_discount_percent") @db.Decimal(5, 2) // remise standard négociée avec ce client (0-100) — pré-remplit le prix des nouvelles lignes, toujours modifiable au cas par cas
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company   Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  documents SalesDocument[]
+  negotiatedPrices ClientProductPrice[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@map("clients")
+}
+
+/// Catalogue d'articles unifié : sert à la fois de catalogue de vente (facturation)
+/// et de fiche d'inventaire (stock). Évite un double référentiel article à resynchroniser.
+model Product {
+  id              String   @id @default(uuid())
+  companyId       String   @map("company_id")
+  code            String   // ex: ART-001
+  designation     String
+  unit            String   // Unité | Carton | Forfait | Mois | Jour | Mètre | Licence...
+  category        String
+  sellingPriceHT  Decimal  @map("selling_price_ht") @db.Decimal(14, 2)
+  unitCost        Decimal? @map("unit_cost") @db.Decimal(14, 2) // P.U. de valorisation du stock
+  trackInventory  Boolean  @default(false) @map("track_inventory") // false pour les articles "Service"
+  stockMin        Decimal  @default(0) @map("stock_min") @db.Decimal(12, 2)
+  stockInitial    Decimal  @default(0) @map("stock_initial") @db.Decimal(12, 2)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company        Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  stockMovements StockMovement[]
+  documentLines  SalesDocumentLine[]
+  purchaseLines  PurchaseDocumentLine[]
+  negotiatedPrices ClientProductPrice[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@map("products")
+}
+
+model StockMovement {
+  id        String   @id @default(uuid())
+  productId String   @map("product_id")
+  date      DateTime
+  type      String   // Entrée | Sortie
+  quantity  Decimal  @db.Decimal(12, 2)
+  reference String?  // ex: "BL-2025-001" ou note libre
+  createdAt DateTime @default(now()) @map("created_at")
+
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@index([productId])
+  @@map("stock_movements")
+}
+
+/// Numérotation atomique par entreprise / type de document / année,
+/// pour garantir l'unicité des numéros même en cas de requêtes concurrentes.
+model DocumentSequence {
+  companyId  String @map("company_id")
+  docType    String @map("doc_type") // Devis | Facture | Bon de livraison
+  year       Int
+  lastNumber Int    @default(0) @map("last_number")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([companyId, docType, year])
+  @@map("document_sequences")
+}
+
+/// Devis, Facture et Bon de livraison partagent la même structure (client + lignes +
+/// montants) et apparaissent ensemble dans le "registre" des documents émis : un seul
+/// modèle avec un champ `type`, plutôt que 3 tables dupliquées.
+model SalesDocument {
+  id              String    @id @default(uuid())
+  companyId       String    @map("company_id")
+  type            String    // Devis | Facture | Bon de livraison
+  number          String    // ex: DEV-2025-001
+  clientId        String    @map("client_id")
+  date            DateTime
+  status          String    // vocabulaire dépendant du type (voir Zod)
+  tvaRatePercent  Decimal   @default(18) @map("tva_rate_percent") @db.Decimal(5, 2) // figé à la création
+  linkedQuoteId   String?   @map("linked_quote_id")   // Facture issue d'un Devis
+  linkedInvoiceId String?   @map("linked_invoice_id") // Bon de livraison issu d'une Facture
+  createdById     String?   @map("created_by_id")     // auteur — seul lui, l'admin de l'entreprise ou le superadmin peut modifier/exporter
+  notes           String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  company   Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  client    Client              @relation(fields: [clientId], references: [id])
+  createdBy User?               @relation("DocumentCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  lines     SalesDocumentLine[]
+  payments  Payment[]
+
+  @@unique([companyId, number])
+  @@index([companyId])
+  @@index([clientId])
+  @@index([createdById])
+  @@map("sales_documents")
+}
+
+model SalesDocumentLine {
+  id                String   @id @default(uuid())
+  documentId        String   @map("document_id")
+  productId         String?  @map("product_id")
+  designation       String   // snapshot au moment de la création du document
+  quantity          Decimal  @db.Decimal(12, 2)
+  quantityDelivered Decimal? @map("quantity_delivered") @db.Decimal(12, 2) // Bon de livraison uniquement
+  unitPriceHT       Decimal  @map("unit_price_ht") @db.Decimal(14, 2)      // snapshot
+  observation       String?
+  lineOrder         Int      @default(0) @map("line_order")
+
+  document SalesDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  product  Product?      @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([documentId])
+  @@map("sales_document_lines")
+}
+
+model Payment {
+  id         String   @id @default(uuid())
+  documentId String   @map("document_id") // doit référencer un document de type Facture
+  amount     Decimal  @db.Decimal(14, 2)
+  date       DateTime
+  method     String?  // Virement | Mobile Money | Espèces | Chèque...
+  note       String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  document SalesDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@map("payments")
+}
+
+// ==================== MODULE IMMOBILISATIONS ====================
+
+/// Paramètres du plan d'amortissement, par entreprise (exercice, seuils, coefficients dégressifs SYSCOHADA).
+model FixedAssetSettings {
+  companyId              String   @id @map("company_id")
+  fiscalYear             Int      @map("fiscal_year")
+  closingDate            DateTime @default(now()) @map("closing_date")
+  corporealThreshold     Decimal  @default(500000) @map("corporeal_threshold") @db.Decimal(14, 2)
+  incorporealThreshold   Decimal  @default(300000) @map("incorporeal_threshold") @db.Decimal(14, 2)
+  degressiveCoefficient  Decimal  @default(1.5) @map("degressive_coefficient") @db.Decimal(4, 2) // ×1.5 (durée ≤5 ans) ou ×2 (>5 ans) — voir engine
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("fixed_asset_settings")
+}
+
+/// Une immobilisation du registre SYSCOHADA. Amortissements, VNC et statut sont
+/// TOUJOURS calculés à la volée par le moteur (jamais stockés) — même principe
+/// que les autres modules : une seule source de vérité, aucune désynchronisation possible.
+model FixedAsset {
+  id              String    @id @default(uuid())
+  companyId       String    @map("company_id")
+  code            String    // ex: IMM-001, généré automatiquement
+  accountNumber   String    @map("account_number") // compte SYSCOHADA (213, 244, 218...)
+  acquisitionDate DateTime  @map("acquisition_date")
+  designation     String
+  category        String    // Bâtiment | Matériel transport | Matériel informatique | Mobilier | Outillage | Installation | Logiciel | Terrain | Autre
+  location        String?
+  method          String    @default("Linéaire") // Linéaire | Dégressif | Non amortissable
+  durationYears   Int?      @map("duration_years") // null si Non amortissable
+  grossValue      Decimal   @map("gross_value") @db.Decimal(16, 2)
+  createdById     String?   @map("created_by_id")
+  notes           String?
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  company   Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User?           @relation("FixedAssetCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  movements AssetMovement[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@map("fixed_assets")
+}
+
+/// Mouvement affectant une immobilisation : acquisition (hors registre initial),
+/// cession ou mise en rebut. La plus/moins-value de cession est calculée par le moteur.
+model AssetMovement {
+  id               String   @id @default(uuid())
+  companyId        String   @map("company_id")
+  fixedAssetId     String?  @map("fixed_asset_id") // null si acquisition non encore rattachée à une fiche
+  date             DateTime
+  pieceNumber      String?  @map("piece_number")
+  designation      String
+  type             String   // Acquisition | Cession | Mise en rebut
+  amount           Decimal  @default(0) @map("amount") @db.Decimal(16, 2) // montant du mouvement (acquisition/rebut)
+  disposalPrice    Decimal? @map("disposal_price") @db.Decimal(16, 2) // prix de cession, le cas échéant
+  notes            String?
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  company    Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  fixedAsset FixedAsset? @relation(fields: [fixedAssetId], references: [id], onDelete: SetNull)
+
+  @@index([companyId])
+  @@index([fixedAssetId])
+  @@map("asset_movements")
+}
+
+// ==================== MODULE TRÉSORERIE ====================
+
+/// Paramètres de trésorerie par entreprise (soldes d'ouverture, seuils d'alerte).
+model TreasurySettings {
+  companyId            String   @id @map("company_id")
+  openingCashBalance    Decimal  @default(0) @map("opening_cash_balance") @db.Decimal(16, 2)
+  openingBankBalance    Decimal  @default(0) @map("opening_bank_balance") @db.Decimal(16, 2)
+  alertThreshold        Decimal  @default(1000000) @map("alert_threshold") @db.Decimal(16, 2)
+  criticalThreshold     Decimal  @default(300000) @map("critical_threshold") @db.Decimal(16, 2)
+  avgCollectionDays     Int      @default(30) @map("avg_collection_days")
+  avgPaymentDays        Int      @default(45) @map("avg_payment_days")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("treasury_settings")
+}
+
+/// Ligne du journal de trésorerie (encaissement ou décaissement quotidien).
+/// Le solde cumulé, les soldes par support (Caisse/Banque+Mobile) et tous les
+/// indicateurs du tableau de bord sont calculés par le moteur, jamais stockés.
+model TreasuryEntry {
+  id            String   @id @default(uuid())
+  companyId     String   @map("company_id")
+  date          DateTime
+  pieceNumber   String?  @map("piece_number")
+  label         String
+  category      String   // Ventes comptant | Règlements clients | Achats fournisseurs | Salaires & charges sociales | ... (libre, voir constants)
+  type          String   // Encaissement | Décaissement
+  amount        Decimal  @db.Decimal(16, 2)
+  support       String   // Caisse | Banque | Orange Money | MTN MoMo | Wave
+  paymentMethod String?  @map("payment_method")
+  status        String   @default("Réalisé") // Réalisé | Prévu
+  createdById   String?  @map("created_by_id")
+  notes         String?
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  company   Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User?   @relation("TreasuryEntryCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  bankStatementLine BankStatementLine?
+
+  @@index([companyId])
+  @@index([companyId, date])
+  @@map("treasury_entries")
+}
+
+/// Ligne de budget prévisionnel mensuel (une rubrique × un mois × un exercice).
+/// Le "réel" n'est jamais dupliqué ici : il est agrégé à la volée depuis
+/// TreasuryEntry (même rubrique = même catégorie) pour comparaison prévu/réel.
+model TreasuryBudgetLine {
+  id         String  @id @default(uuid())
+  companyId  String  @map("company_id")
+  fiscalYear Int     @map("fiscal_year")
+  rubric     String  // doit correspondre à une catégorie du journal pour la comparaison réel/prévu
+  type       String  // Encaissement | Décaissement
+  month      Int     // 1-12
+  amount     Decimal @default(0) @db.Decimal(16, 2)
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, fiscalYear, rubric, type, month])
+  @@index([companyId, fiscalYear])
+  @@map("treasury_budget_lines")
+}
+
+// ==================== MODULE BUSINESS PLAN ====================
+
+/// Un business plan par projet/entreprise. Les sections narratives (présentation,
+/// synthèse, étude de marché, PESTEL/SWOT, concurrents, cibles, offre, stratégie)
+/// sont volontairement du texte libre structuré (JSON), pas des tableurs complexes :
+/// c'est le contenu qualitatif du plan, pas un calcul. Les sections financières,
+/// elles, ont chacune leur modèle relationnel dédié avec un moteur de calcul fidèle
+/// au classeur source (investissement/financement, compte de résultat 3 ans, plan
+/// de trésorerie mensuel, bilan prévisionnel + indicateurs).
+model BusinessPlan {
+  id                String   @id @default(uuid())
+  companyId         String   @map("company_id")
+  title             String
+  status            String   @default("Brouillon") // Brouillon | Finalisé
+  horizonYears      Int      @default(3) @map("horizon_years")
+  narrativeSections Json?    @map("narrative_sections") // { presentation, executiveSummary, organisation, marketStudy, pestel, swot, competitors, targetClients, offerPricing, strategy }
+  createdById       String?  @map("created_by_id")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  company   Company                  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User?                    @relation("BusinessPlanCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  investments BusinessPlanInvestment[]
+  fundings    BusinessPlanFunding[]
+  suppliers   BusinessPlanSupplier[]
+  plLines     BusinessPlanPLLine[]
+  cashflowLines BusinessPlanCashflowLine[]
+  balanceLines  BusinessPlanBalanceLine[]
+
+  @@index([companyId])
+  @@map("business_plans")
+}
+
+/// Besoin de financement au démarrage (partie gauche du tableau Investissement de départ).
+model BusinessPlanInvestment {
+  id             String  @id @default(uuid())
+  businessPlanId String  @map("business_plan_id")
+  category       String
+  description    String
+  amount         Decimal @db.Decimal(16, 2)
+  notes          String?
+
+  businessPlan BusinessPlan @relation(fields: [businessPlanId], references: [id], onDelete: Cascade)
+
+  @@index([businessPlanId])
+  @@map("business_plan_investments")
+}
+
+/// Ressource de financement au démarrage (partie droite du tableau Investissement de départ).
+model BusinessPlanFunding {
+  id             String  @id @default(uuid())
+  businessPlanId String  @map("business_plan_id")
+  type           String // Apport personnel | Emprunt bancaire | Subvention | Love money | Autre
+  detail         String
+  amount         Decimal @db.Decimal(16, 2)
+  notes          String?
+
+  businessPlan BusinessPlan @relation(fields: [businessPlanId], references: [id], onDelete: Cascade)
+
+  @@index([businessPlanId])
+  @@map("business_plan_fundings")
+}
+
+/// Liste des fournisseurs pressentis (bas de l'onglet Investissement de départ).
+model BusinessPlanSupplier {
+  id             String  @id @default(uuid())
+  businessPlanId String  @map("business_plan_id")
+  name           String
+  supplyType     String  @map("supply_type")
+  annualAmount   Decimal @default(0) @map("annual_amount") @db.Decimal(16, 2)
+  notes          String?
+
+  businessPlan BusinessPlan @relation(fields: [businessPlanId], references: [id], onDelete: Cascade)
+
+  @@index([businessPlanId])
+  @@map("business_plan_suppliers")
+}
+
+/// Ligne du compte de résultat prévisionnel (une rubrique × une année, sur l'horizon du plan).
+model BusinessPlanPLLine {
+  id             String  @id @default(uuid())
+  businessPlanId String  @map("business_plan_id")
+  year           Int     // 1..horizonYears
+  section        String  // ChiffreAffaires | ChargesVariables | ChargesFixes | ChargesPersonnel | ImpotsTaxes | ChargesFinancieres | ImpotSocietes
+  label          String
+  amount         Decimal @db.Decimal(16, 2)
+
+  businessPlan BusinessPlan @relation(fields: [businessPlanId], references: [id], onDelete: Cascade)
+
+  @@index([businessPlanId, year])
+  @@map("business_plan_pl_lines")
+}
+
+/// Ligne du plan de trésorerie mensuel (année 1, granularité mensuelle — comme le classeur source).
+model BusinessPlanCashflowLine {
+  id             String  @id @default(uuid())
+  businessPlanId String  @map("business_plan_id")
+  month          Int     // 1..12
+  type           String  // Encaissement | Décaissement
+  category       String
+  label          String
+  amount         Decimal @db.Decimal(16, 2)
+
+  businessPlan BusinessPlan @relation(fields: [businessPlanId], references: [id], onDelete: Cascade)
+
+  @@index([businessPlanId, month])
+  @@map("business_plan_cashflow_lines")
+}
+
+/// Ligne du bilan prévisionnel (une rubrique × une année). Résultat net et
+/// trésorerie ne sont PAS saisis ici : ils sont recalculés depuis le compte de
+/// résultat et le plan de trésorerie — une seule source de vérité.
+model BusinessPlanBalanceLine {
+  id             String  @id @default(uuid())
+  businessPlanId String  @map("business_plan_id")
+  year           Int
+  side           String  // Actif | Passif
+  category       String  // Immobilisations incorporelles/corporelles/financières, Stocks, Créances clients, Créance TVA (actif) — Apport personnel, Réserves, Emprunts, Dettes fournisseurs, Dettes fiscales et sociales (passif)
+  amount         Decimal @db.Decimal(16, 2)
+
+  businessPlan BusinessPlan @relation(fields: [businessPlanId], references: [id], onDelete: Cascade)
+
+  @@index([businessPlanId, year])
+  @@map("business_plan_balance_lines")
+}
+
+// ==================== MODULE COMPTABILITÉ GÉNÉRALE ====================
+
+/// Type de journal comptable — les six journaux auxiliaires usuels du plan
+/// SYSCOHADA (une entreprise peut ne pas tous les utiliser, mais leur existence
+/// structure la numérotation des pièces et la lecture du grand livre).
+enum JournalType {
+  ACHATS
+  VENTES
+  BANQUE
+  CAISSE
+  OD // Opérations diverses (salaires, amortissements, régularisations...)
+  PAIE
+}
+
+/// Rôle fonctionnel d'un compte, utilisé UNIQUEMENT pour la génération
+/// automatique d'écritures (factures, paiements...) : plutôt que de coder en
+/// dur un numéro de compte SYSCOHADA (qui peut légitimement varier d'une
+/// entreprise à l'autre selon son plan comptable propre), le moteur de
+/// contre-passation cherche "le compte ayant ce rôle" pour l'entreprise
+/// concernée. Un compte sans rôle reste utilisable en saisie manuelle normale.
+enum AccountRole {
+  CLIENTS
+  FOURNISSEURS
+  VENTES_MARCHANDISES
+  VENTES_SERVICES
+  ACHATS
+  TVA_COLLECTEE
+  TVA_DEDUCTIBLE
+  BANQUE
+  CAISSE
+  CHARGES_PERSONNEL
+  PERSONNEL_REMUNERATIONS_DUES
+  ORGANISMES_SOCIAUX
+  DOTATIONS_AMORTISSEMENTS
+  AMORTISSEMENTS_CUMULES
+}
+
+/// Plan comptable de l'entreprise (sous-ensemble du plan SYSCOHADA qu'elle
+/// utilise réellement). Une entreprise démarre avec une trame standard
+/// pré-remplie (voir chartOfAccounts.seedData.ts) qu'elle peut compléter.
+model ChartOfAccount {
+  id            String   @id @default(uuid())
+  companyId     String   @map("company_id")
+  accountNumber String   @map("account_number") // ex: "411000", "701000" — codification SYSCOHADA
+  label         String
+  classe        String   // "1".."8" — premier chiffre du compte, dérivé mais stocké pour requêtes rapides
+  role          AccountRole? // voir AccountRole — uniquement pour les comptes utilisés en contre-passation automatique
+  isActive      Boolean  @default(true) @map("is_active")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  company Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  lines   JournalEntryLine[]
+
+  @@unique([companyId, accountNumber])
+  @@index([companyId])
+  @@index([companyId, role])
+  @@map("chart_of_accounts")
+}
+
+/// Séquence de numérotation des pièces comptables, par journal et par exercice —
+/// même principe atomique que DocumentSequence (upsert + incrément en
+/// transaction) pour ne jamais produire de doublon en cas de concurrence.
+model JournalEntrySequence {
+  companyId  String      @map("company_id")
+  journal    JournalType
+  year       Int
+  lastNumber Int         @default(0) @map("last_number")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([companyId, journal, year])
+  @@map("journal_entry_sequences")
+}
+
+/// Écriture comptable (en-tête). Toujours équilibrée (somme des débits = somme
+/// des crédits sur ses lignes) — contrôle appliqué au niveau service, jamais
+/// contournable même pour une écriture générée automatiquement.
+model JournalEntry {
+  id          String      @id @default(uuid())
+  companyId   String      @map("company_id")
+  journal     JournalType
+  date        DateTime
+  pieceNumber String      @map("piece_number") // ex: VTE-2026-00042
+  label       String
+  // Traçabilité de l'origine d'une écriture générée automatiquement (facture,
+  // paiement...) — permet de retrouver/empêcher une double contre-passation,
+  // et d'expliquer d'où vient une ligne du grand livre. Nulle pour une saisie manuelle.
+  sourceType  String?     @map("source_type") // "SalesDocument" | "Payment" | "TreasuryEntry"...
+  sourceId    String?     @map("source_id")
+  createdById String?     @map("created_by_id")
+  createdAt   DateTime    @default(now()) @map("created_at")
+
+  company   Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy User?              @relation("JournalEntryCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  lines     JournalEntryLine[]
+
+  @@index([companyId])
+  @@index([companyId, date])
+  @@index([sourceType, sourceId])
+  @@map("journal_entries")
+}
+
+/// Ligne d'écriture — un mouvement débit OU crédit sur un compte du plan
+/// comptable. Jamais les deux à la fois sur une même ligne (contrôlé au niveau
+/// service), conformément à la logique de la partie double.
+model JournalEntryLine {
+  id               String   @id @default(uuid())
+  journalEntryId   String   @map("journal_entry_id")
+  chartOfAccountId String   @map("chart_of_account_id")
+  label            String?
+  debit            Decimal  @default(0) @db.Decimal(16, 2)
+  credit           Decimal  @default(0) @db.Decimal(16, 2)
+  lineOrder        Int      @default(0) @map("line_order")
+
+  journalEntry   JournalEntry   @relation(fields: [journalEntryId], references: [id], onDelete: Cascade)
+  chartOfAccount ChartOfAccount @relation(fields: [chartOfAccountId], references: [id])
+
+  @@index([journalEntryId])
+  @@index([chartOfAccountId])
+  @@map("journal_entry_lines")
+}
+
+// ==================== MODULE ACHATS & FOURNISSEURS ====================
+// Symétrique du module Facturation (Client/SalesDocument/Payment) — mêmes
+// principes : statut de facture fournisseur calculé depuis les paiements
+// (jamais stocké en dur), numérotation atomique par séquence dédiée.
+
+model Supplier {
+  id        String   @id @default(uuid())
+  companyId String   @map("company_id")
+  code      String   // ex: FRS-001
+  name      String
+  type      String   // Entreprise | Particulier
+  address   String?
+  phone     String?
+  email     String?
+  rccm      String?
+  quality   String   @default("Nouveau") // Nouveau | Bon | Excellent
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company   Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  documents PurchaseDocument[]
+
+  @@unique([companyId, code])
+  @@index([companyId])
+  @@map("suppliers")
+}
+
+model PurchaseDocument {
+  id             String   @id @default(uuid())
+  companyId      String   @map("company_id")
+  type           String   // Bon de commande | Facture fournisseur
+  number         String   // ex: BC-2026-001
+  supplierId     String   @map("supplier_id")
+  date           DateTime
+  status         String   // vocabulaire dépendant du type (voir Zod)
+  tvaRatePercent Decimal  @default(18) @map("tva_rate_percent") @db.Decimal(5, 2) // figé à la création
+  linkedOrderId  String?  @map("linked_order_id") // Facture fournisseur issue d'un Bon de commande
+  createdById    String?  @map("created_by_id")
+  notes          String?
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  company   Company                @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  supplier  Supplier               @relation(fields: [supplierId], references: [id])
+  createdBy User?                  @relation("PurchaseDocumentCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  lines     PurchaseDocumentLine[]
+  payments  SupplierPayment[]
+
+  @@unique([companyId, number])
+  @@index([companyId])
+  @@index([supplierId])
+  @@index([createdById])
+  @@map("purchase_documents")
+}
+
+model PurchaseDocumentLine {
+  id          String  @id @default(uuid())
+  documentId  String  @map("document_id")
+  productId   String? @map("product_id") // réutilise le catalogue Product existant, sans obligation
+  designation String  // snapshot au moment de la création du document
+  quantity    Decimal @db.Decimal(12, 2)
+  unitPriceHT Decimal @map("unit_price_ht") @db.Decimal(14, 2) // snapshot
+  observation String?
+  lineOrder   Int     @default(0) @map("line_order")
+
+  document PurchaseDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  product  Product?         @relation(fields: [productId], references: [id], onDelete: SetNull)
+
+  @@index([documentId])
+  @@map("purchase_document_lines")
+}
+
+model SupplierPayment {
+  id         String   @id @default(uuid())
+  documentId String   @map("document_id") // doit référencer un document de type Facture fournisseur
+  amount     Decimal  @db.Decimal(14, 2)
+  date       DateTime
+  method     String?
+  note       String?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  document PurchaseDocument @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@index([documentId])
+  @@map("supplier_payments")
+}
+
+model PurchaseDocumentSequence {
+  companyId  String @map("company_id")
+  docType    String @map("doc_type") // Bon de commande | Facture fournisseur
+  year       Int
+  lastNumber Int    @default(0) @map("last_number")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@id([companyId, docType, year])
+  @@map("purchase_document_sequences")
+}
+
+// ==================== MODULE CONTRÔLE INTERNE ====================
+
+/// Journal d'audit — trace CRÉATION/MODIFICATION/SUPPRESSION sur les objets
+/// financiers sensibles (écritures comptables, documents commerciaux et
+/// d'achat, paiements, trésorerie...). Contrairement à `createdById` déjà
+/// présent sur certains modèles (qui ne retient QUE le créateur), ce journal
+/// conserve l'historique complet : qui a fait quoi, quand — y compris les
+/// modifications et suppressions ultérieures, jamais tracées jusqu'ici.
+/// `entityLabel` et `summary` sont des instantanés textuels lisibles
+/// directement, sans recharger l'entité d'origine (utile en particulier après
+/// une suppression, où l'entité elle-même n'existe plus).
+model AuditLog {
+  id          String   @id @default(uuid())
+  companyId   String   @map("company_id")
+  userId      String?  @map("user_id") // nullable si l'auteur du compte a depuis été supprimé
+  action      String   // "CREATE" | "UPDATE" | "DELETE"
+  entityType  String   @map("entity_type") // "JournalEntry" | "SalesDocument" | "PurchaseDocument" | "Payment" | "TreasuryEntry"...
+  entityId    String   @map("entity_id")
+  entityLabel String   @map("entity_label") // ex: "Facture FAC-2026-001"
+  summary     String   // résumé humain de l'action, ex: "Créée : 3 ligne(s), 118 000 KMF"
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([companyId])
+  @@index([companyId, entityType, entityId])
+  @@index([companyId, createdAt])
+  @@map("audit_logs")
+}
+
+// ==================== MODULE RAPPROCHEMENT BANCAIRE ====================
+
+/// Ligne de relevé bancaire — importée (CSV) ou saisie manuellement, puis
+/// rapprochée avec l'écriture de trésorerie correspondante (`matchedEntryId`).
+/// Le montant est signé (positif = crédit reçu par la banque, négatif =
+/// débit) — convention alignée sur celle d'un relevé bancaire réel, distincte
+/// du couple type/amount toujours positif utilisé par TreasuryEntry.
+model BankStatementLine {
+  id            String   @id @default(uuid())
+  companyId     String   @map("company_id")
+  date          DateTime
+  label         String
+  amount        Decimal  @db.Decimal(16, 2) // signé : positif = crédit, négatif = débit
+  reference     String?  // référence bancaire si disponible sur le relevé importé
+  matchedEntryId String? @unique @map("matched_entry_id")
+  importBatch   String?  @map("import_batch") // regroupe les lignes d'un même import, pour pouvoir l'annuler en bloc
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  company      Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  matchedEntry TreasuryEntry? @relation(fields: [matchedEntryId], references: [id], onDelete: SetNull)
+
+  @@index([companyId])
+  @@index([companyId, date])
+  @@map("bank_statement_lines")
+}
+
+// ==================== AVENANTS AU CONTRAT DE TRAVAIL ====================
+
+/// Trace chaque changement significatif du contrat d'un employé (poste,
+/// département, salaire, type de contrat) — jusqu'ici, modifier la fiche
+/// employé écrasait silencieusement l'ancienne valeur sans laisser de trace.
+/// Seuls les champs EFFECTIVEMENT modifiés par un avenant donné sont
+/// renseignés (avant/après) ; les autres restent `null` plutôt que de
+/// dupliquer toute la fiche employé à chaque avenant.
+model ContractAmendment {
+  id            String   @id @default(uuid())
+  employeeId    String   @map("employee_id")
+  effectiveDate DateTime @map("effective_date")
+  reason        String   // Promotion | Augmentation salariale | Changement de poste | Changement de département | Autre
+
+  previousPosition String? @map("previous_position")
+  newPosition      String? @map("new_position")
+
+  previousDepartment String? @map("previous_department")
+  newDepartment      String? @map("new_department")
+
+  previousGrossSalary Decimal? @map("previous_gross_salary") @db.Decimal(14, 2)
+  newGrossSalary      Decimal? @map("new_gross_salary") @db.Decimal(14, 2)
+
+  previousContractType String? @map("previous_contract_type")
+  newContractType      String? @map("new_contract_type")
+
+  notes       String?
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  employee  Employee @relation(fields: [employeeId], references: [id], onDelete: Cascade)
+  createdBy User?    @relation("ContractAmendmentCreator", fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([employeeId])
+  @@map("contract_amendments")
+}
+
+// ==================== CLÔTURE D'EXERCICE COMPTABLE ====================
+
+/// Statut d'ouverture/clôture d'un exercice comptable par entreprise. Tant
+/// qu'aucune ligne n'existe pour une année donnée, l'exercice est considéré
+/// implicitement OUVERT (comportement historique préservé pour ne pas casser
+/// les entreprises déjà en cours d'utilisation) — seule la présence d'une
+/// ligne CLOSED verrouille réellement les écritures de cette année.
+model FiscalYearClosing {
+  id            String   @id @default(uuid())
+  companyId     String   @map("company_id")
+  fiscalYear    Int      @map("fiscal_year")
+  closingDate   DateTime @map("closing_date") // dernier jour de l'exercice clôturé
+  netResult     Decimal  @map("net_result") @db.Decimal(16, 2) // positif = bénéfice, négatif = perte
+  closingEntryId String? @map("closing_entry_id") // écriture de clôture générée (169/701 -> 130/129)
+  closedById    String?  @map("closed_by_id")
+  closedAt      DateTime @default(now()) @map("closed_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  closedBy User?  @relation("FiscalYearCloser", fields: [closedById], references: [id], onDelete: SetNull)
+
+  @@unique([companyId, fiscalYear])
+  @@index([companyId])
+  @@map("fiscal_year_closings")
+}
+
+// ==================== PRIX NÉGOCIÉS PAR CLIENT ====================
+
+/// Prix spécifique négocié pour un couple (client, article) — prioritaire sur
+/// la remise par défaut du client (Client.defaultDiscountPercent), elle-même
+/// prioritaire sur le prix catalogue standard (Product.sellingPriceHT). Voir
+/// negotiatedPricing.service.ts::resolveLinePrice pour l'ordre de résolution complet.
+model ClientProductPrice {
+  id          String   @id @default(uuid())
+  clientId    String   @map("client_id")
+  productId   String   @map("product_id")
+  unitPriceHT Decimal  @map("unit_price_ht") @db.Decimal(14, 2)
+  notes       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  client  Client  @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  product Product @relation(fields: [productId], references: [id], onDelete: Cascade)
+
+  @@unique([clientId, productId])
+  @@index([clientId])
+  @@map("client_product_prices")
+}
+
+// ==================== BUDGET PRÉVISIONNEL DU COMPTE DE RÉSULTAT ====================
+
+/// Réplique exactement le principe déjà appliqué à TreasuryBudgetLine : un
+/// budget saisi par mois/type pour une année donnée, jamais un réel dupliqué
+/// dans une table séparée — le réel est toujours calculé directement depuis
+/// les écritures déjà comptabilisées (JournalEntryLine sur les comptes de
+/// classe 6 "Charge" et classe 7 "Produit"), voir incomeBudget.service.ts.
+model IncomeBudgetLine {
+  id         String  @id @default(uuid())
+  companyId  String  @map("company_id")
+  fiscalYear Int     @map("fiscal_year")
+  type       String  // Produit | Charge
+  month      Int     // 1-12
+  amount     Decimal @default(0) @db.Decimal(16, 2)
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, fiscalYear, type, month])
+  @@index([companyId, fiscalYear])
+  @@map("income_budget_lines")
+}
+
+// ==================== RECRUTEMENT — AUTHENTIFICATION CANDIDATE ====================
+// Table VOLONTAIREMENT séparée de User, pas une extension : User.role
+// (USER|ADMIN|SUPERADMIN) est présumé partout dans le code d'autorisation
+// actuel comme "membre d'une entreprise ou superadmin" — un candidat n'est
+// ni l'un ni l'autre. Mêler les deux aurait cassé cette hypothèse dans des
+// dizaines d'endroits déjà écrits plutôt que d'en introduire une nouvelle,
+// propre et isolée. Mêmes conventions de champs que User (email, hash,
+// vérification email) pour la cohérence de lecture, jamais le même modèle.
+model Candidate {
+  id            String   @id @default(uuid())
+  email         String   @unique
+  passwordHash  String?  @map("password_hash") // optionnel : un compte créé via Google n'a pas de mot de passe local
+  fullName      String   @map("full_name")
+  phone         String?
+  emailVerified Boolean  @default(false) @map("email_verified")
+  /// Chemin relatif sous /uploads (ex: "candidate-photos/{id}.png") — partagée
+  /// entre tous les CV du candidat, cohérent avec Company.logoUrl : une photo
+  /// appartient à la personne, pas à un CV précis.
+  photoUrl      String?  @map("photo_url")
+  googleId      String?  @unique @map("google_id")
+  authProvider  String   @default("local") @map("auth_provider") // "local" | "google"
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  verificationTokens CandidateVerificationToken[]
+  cvs                CandidateCv[]
+  jobApplications    JobApplication[]
+  jobNotifications   CandidateJobNotification[]
+  contactNotifications CandidateContactNotification[]
+  conversationParticipations ConversationParticipant[]
+  sentMessages Message[]
+  conversationReports ConversationReport[]
+
+  @@map("candidates")
+}
+
+/// Réplique VerificationToken (utils/verificationToken.ts), mais avec sa
+/// propre clé étrangère vers Candidate — VerificationToken.userId a une FK
+/// stricte vers User (onDelete: Cascade), impossible à réutiliser pour un
+/// candidateId sans la casser.
+model CandidateVerificationToken {
+  id          String   @id @default(uuid())
+  candidateId String   @map("candidate_id")
+  tokenHash   String   @unique @map("token_hash")
+  type        String   // "EMAIL_VERIFICATION" | "PASSWORD_RESET"
+  expiresAt   DateTime @map("expires_at")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([candidateId, type])
+  @@map("candidate_verification_tokens")
+}
+
+// ==================== RECRUTEMENT — CV, OFFRES, CANDIDATURES ====================
+
+/// CV structuré (formations/expériences en champs, jamais de fichier
+/// uploadé) — décision produit : un candidat peut créer autant de CV qu'il
+/// souhaite, en choisir UN à soumettre par candidature. `visibility` distingue
+/// un CV de travail (Brouillon) d'un CV publié dans l'annuaire public (Public) —
+/// l'annuaire lui-même reste un chantier séparé (Should-have), mais ce champ
+/// est déjà la fondation qui permettra de filtrer sans migration ultérieure.
+model CandidateCv {
+  id           String   @id @default(uuid())
+  candidateId  String   @map("candidate_id")
+  title        String   // ex: "Comptable senior", intitulé recherché par le candidat
+  summary      String?  @db.Text
+  visibility   String   @default("Brouillon") // "Brouillon" | "Public"
+  /// Gabarit de mise en forme du CV — "classique" | "moderne" (colonnes avec
+  /// bandeau latéral, inspiré d'une référence graphique fournie par
+  /// l'utilisateur). Par CV, pas par candidat : un même candidat peut vouloir
+  /// des présentations différentes selon le poste visé.
+  template     String   @default("classique")
+  /// Contrôle fin de ce qu'un CV Public expose réellement — indépendant de
+  /// visibility, qui ne fait que rendre le CV trouvable. Un candidat qui
+  /// publie son CV ne veut pas nécessairement révéler son nom réel, sa photo
+  /// ou son téléphone à n'importe quel visiteur ; le contact reste de toute
+  /// façon toujours relayé sans jamais exposer l'email (voir
+  /// contactCandidateViaCv, inchangé). Désactivés par défaut sauf le nom,
+  /// déjà exposé aujourd'hui — ne pas régresser le comportement existant.
+  showFullName Boolean  @default(true) @map("show_full_name")
+  showPhoto    Boolean  @default(false) @map("show_photo")
+  showPhone    Boolean  @default(false) @map("show_phone")
+  /// Listes libres, "à volonté" — pas de modèle relationnel séparé pour ces
+  /// deux-là : un simple libellé par entrée, sans métadonnée additionnelle,
+  /// contrairement aux langues (nom + niveau) qui ont besoin d'une vraie
+  /// structure. PostgreSQL supporte nativement les tableaux, pas besoin
+  /// d'une table de jonction pour ce qui reste fondamentalement des tags.
+  permits      String[] @default([])
+  interests    String[] @default([])
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  candidate   Candidate       @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  educations  CvEducation[]
+  experiences CvExperience[]
+  skills      CvSkill[]
+  languages   CvLanguage[]
+
+  @@index([candidateId])
+  @@map("cvs")
+}
+
+/// Compétence structurée (titre + niveau) — remplace l'ancien champ texte
+/// libre `skills` (liste séparée par virgules), pour permettre un affichage
+/// et un filtrage cohérents plutôt qu'une chaîne non structurée.
+model CvSkill {
+  id    String @id @default(uuid())
+  cvId  String @map("cv_id")
+  title String // ex: "Comptabilité"
+  level String // "Débutant" | "Intermédiaire" | "Avancé" | "Expert"
+  /// Détails concrets acquis dans cette compétence (ex: pour "Linux" —
+  /// "administration serveur", "scripting Bash", "durcissement sécurité") —
+  /// même choix que permits/interests : simple liste de libellés, sans
+  /// métadonnée propre, pas de modèle relationnel séparé.
+  specificities String[] @default([])
+
+  cv CandidateCv @relation(fields: [cvId], references: [id], onDelete: Cascade)
+
+  @@index([cvId])
+  @@map("cv_skills")
+}
+
+/// Langue déclarée par le candidat — nom + niveau, structure à deux champs
+/// qui justifie un vrai modèle relationnel (contrairement à permits/interests,
+/// simples libellés). Réutilise la même échelle de niveaux que CvSkill par
+/// cohérence, plutôt que d'introduire une échelle CECRL (A1-C2) séparée.
+model CvLanguage {
+  id    String @id @default(uuid())
+  cvId  String @map("cv_id")
+  name  String // ex: "Anglais"
+  level String // "Débutant" | "Intermédiaire" | "Avancé" | "Expert"
+
+  cv CandidateCv @relation(fields: [cvId], references: [id], onDelete: Cascade)
+
+  @@index([cvId])
+  @@map("cv_languages")
+}
+
+model CvEducation {
+  id        String  @id @default(uuid())
+  cvId      String  @map("cv_id")
+  degree    String  // ex: "Licence en comptabilité"
+  school    String
+  startYear Int     @map("start_year")
+  endYear   Int?    @map("end_year") // null = en cours
+
+  cv CandidateCv @relation(fields: [cvId], references: [id], onDelete: Cascade)
+
+  @@index([cvId])
+  @@map("cv_educations")
+}
+
+model CvExperience {
+  id          String    @id @default(uuid())
+  cvId        String    @map("cv_id")
+  title       String    // ex: "Comptable"
+  company     String
+  startDate   DateTime  @map("start_date")
+  endDate     DateTime? @map("end_date") // null = poste actuel
+  description String?   @db.Text
+
+  cv CandidateCv @relation(fields: [cvId], references: [id], onDelete: Cascade)
+
+  @@index([cvId])
+  @@map("cv_experiences")
+}
+
+/// Offre publiée par une entreprise — visible publiquement dès que status = "Ouverte".
+model JobPosting {
+  id          String   @id @default(uuid())
+  companyId   String   @map("company_id")
+  title       String
+  description String   @db.Text
+  location    String?
+  contractType String  @map("contract_type") // ex: "CDI", "CDD", "Stage"
+  status      String   @default("Ouverte") // "Ouverte" | "Fermée"
+  /// Années d'expérience minimales souhaitées — filtre par seuil côté
+  /// annuaire public, jamais une contrainte stricte de candidature (un
+  /// candidat avec moins d'expérience peut toujours postuler).
+  desiredExperienceYears Int? @map("desired_experience_years")
+  createdById String?  @map("created_by_id")
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  company      Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  createdBy    User?             @relation("JobPostingCreator", fields: [createdById], references: [id], onDelete: SetNull)
+  applications JobApplication[]
+  notifications CandidateJobNotification[]
+  desiredSkills JobPostingSkill[]
+
+  @@index([companyId])
+  @@index([status])
+  @@index([createdById])
+  @@map("job_postings")
+}
+
+/// Compétence souhaitée par l'entreprise pour ce poste — même structure que
+/// CvSkill (titre + niveau) côté candidat, pour rester cohérent et permettre
+/// un futur rapprochement direct entre les deux listes sans traduction.
+model JobPostingSkill {
+  id           String @id @default(uuid())
+  jobPostingId String @map("job_posting_id")
+  title        String
+  level        String // "Débutant" | "Intermédiaire" | "Avancé" | "Expert"
+
+  jobPosting JobPosting @relation(fields: [jobPostingId], references: [id], onDelete: Cascade)
+
+  @@index([jobPostingId])
+  @@map("job_posting_skills")
+}
+
+/// Candidature — cvSnapshot est une COPIE FIGÉE du CV au moment de la
+/// soumission (décision produit explicite), jamais une référence vivante :
+/// si le candidat modifie ensuite le CV source, l'entreprise doit continuer
+/// à voir exactement ce qui a été soumis à l'origine, pas une version dérivée.
+model JobApplication {
+  id          String   @id @default(uuid())
+  jobPostingId String  @map("job_posting_id")
+  candidateId String   @map("candidate_id")
+  cvSnapshot  Json     @map("cv_snapshot")
+  status      String   @default("Reçue") // "Reçue" | "En cours" | "Retenue" | "Refusée"
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  jobPosting JobPosting @relation(fields: [jobPostingId], references: [id], onDelete: Cascade)
+  candidate  Candidate  @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  notifications CompanyApplicationNotification[]
+
+  @@unique([jobPostingId, candidateId]) // une seule candidature par candidat et par offre
+  @@index([jobPostingId])
+  @@index([candidateId])
+  @@map("job_applications")
+}
+
+/// Une entrée par candidat ciblé à chaque offre publiée — créée immédiatement
+/// à la publication (ciblage par mots-clés), mais l'email n'est envoyé qu'en
+/// digest quotidien (emailedAt), jamais un email par offre individuelle :
+/// même principe déjà établi pour les alertes entreprise
+/// (notifications.service.ts), pour éviter le spam par construction plutôt
+/// que par un réglage a posteriori.
+model CandidateJobNotification {
+  id           String    @id @default(uuid())
+  candidateId  String    @map("candidate_id")
+  jobPostingId String    @map("job_posting_id")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  readAt       DateTime? @map("read_at")
+  emailedAt    DateTime? @map("emailed_at")
+
+  candidate  Candidate  @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  jobPosting JobPosting @relation(fields: [jobPostingId], references: [id], onDelete: Cascade)
+
+  @@unique([candidateId, jobPostingId]) // jamais deux notifications pour la même offre
+  @@index([candidateId, readAt])
+  @@index([emailedAt])
+  @@map("candidate_job_notifications")
+}
+
+/// Notifie l'espace entreprise (tous les membres, comme AuditLog déjà établi
+/// dans ce schéma — pas un utilisateur individuel) qu'une candidature vient
+/// d'être reçue sur l'une de ses offres.
+model CompanyApplicationNotification {
+  id               String   @id @default(uuid())
+  companyId        String   @map("company_id")
+  jobApplicationId String   @map("job_application_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+  readAt           DateTime? @map("read_at")
+
+  company        Company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  jobApplication JobApplication @relation(fields: [jobApplicationId], references: [id], onDelete: Cascade)
+
+  @@index([companyId, readAt])
+  @@map("company_application_notifications")
+}
+
+/// Notifie un candidat qu'un message lui a été envoyé via son CV publié —
+/// distinct de CandidateJobNotification (offres correspondantes) : un
+/// candidat n'a pas nécessairement de compétences correspondantes, il a
+/// simplement été contacté directement. Les deux sont fusionnées côté
+/// service pour l'affichage in-app unifié.
+model CandidateContactNotification {
+  id          String   @id @default(uuid())
+  candidateId String   @map("candidate_id")
+  cvId        String   @map("cv_id")
+  cvTitle     String   @map("cv_title") // capturé au moment de l'envoi — le CV source peut être modifié ou supprimé ensuite
+  senderName  String   @map("sender_name")
+  senderEmail String   @map("sender_email")
+  message     String   @db.Text
+  createdAt   DateTime @default(now()) @map("created_at")
+  readAt      DateTime? @map("read_at")
+
+  candidate Candidate @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@index([candidateId, readAt])
+  @@map("candidate_contact_notifications")
+}
+
+/// Messagerie B2B/B2C — nommée "Messagerie" en interne (pas "chat temps
+/// réel") : livraison par polling resserré, jamais un vrai push serveur,
+/// décision produit explicite pour ne pas introduire la première dépendance
+/// temps réel de ce projet sur la base d'un MVP. Exactement 2 participants
+/// par conversation (pas de groupe) — contrainte appliquée côté service,
+/// Prisma ne peut pas exprimer nativement "exactement N lignes liées".
+model Conversation {
+  id        String   @id @default(uuid())
+  createdAt DateTime @default(now()) @map("created_at")
+  /// Dernière activité (nouveau message) — sert au tri de la liste des
+  /// conversations, mis à jour explicitement à chaque envoi plutôt que
+  /// recalculé à la volée depuis les messages à chaque requête.
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  participants ConversationParticipant[]
+  messages     Message[]
+  reports      ConversationReport[]
+
+  @@map("conversations")
+}
+
+/// Un participant est SOIT une entreprise (tous ses membres lisent et
+/// répondent dans la même conversation, cohérent avec CompanyApplicationNotification
+/// et AuditLog déjà établis dans ce schéma) SOIT un candidat individuel —
+/// exactement un des deux champs companyId/candidateId est renseigné, jamais
+/// les deux ni aucun (contrainte XOR appliquée côté service, non exprimable
+/// nativement par Prisma). lastReadAt remplace une table de lecture par
+/// message : un message est "non lu" pour ce participant si
+/// message.createdAt > lastReadAt.
+model ConversationParticipant {
+  id             String    @id @default(uuid())
+  conversationId String    @map("conversation_id")
+  companyId      String?   @map("company_id")
+  candidateId    String?   @map("candidate_id")
+  lastReadAt     DateTime? @map("last_read_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  company      Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  candidate    Candidate?   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, companyId])
+  @@unique([conversationId, candidateId])
+  @@index([companyId])
+  @@index([candidateId])
+  @@map("conversation_participants")
+}
+
+model Message {
+  id             String   @id @default(uuid())
+  conversationId String   @map("conversation_id")
+  senderType     String   @map("sender_type") // "COMPANY" | "CANDIDATE"
+  /// Renseigné uniquement si senderType = "COMPANY" — quel membre précis a
+  /// écrit, l'entreprise entière étant le participant mais un utilisateur
+  /// individuel étant l'auteur réel du message. onDelete: SetNull cohérent
+  /// avec JobPosting.createdById déjà établi : le message survit à la
+  /// suppression de son auteur, seule l'attribution se perd.
+  senderUserId      String? @map("sender_user_id")
+  senderCandidateId String? @map("sender_candidate_id")
+  body           String   @db.Text
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  conversation   Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  senderUser     User?        @relation(fields: [senderUserId], references: [id], onDelete: SetNull)
+  senderCandidate Candidate?  @relation(fields: [senderCandidateId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId, createdAt])
+  @@map("messages")
+}
+
+/// Signalement — condition de lancement non négociable dès le MVP (cadrage
+/// stratégique) : un canal de message libre entre entreprises et candidats
+/// inconnus ne doit jamais exister sans mécanisme minimal de modération.
+/// resolvedAt reste null jusqu'à une future revue admin (hors périmètre MVP,
+/// mais le champ existe pour ne pas avoir à migrer plus tard).
+model ConversationReport {
+  id             String    @id @default(uuid())
+  conversationId String    @map("conversation_id")
+  reporterType   String    @map("reporter_type") // "COMPANY" | "CANDIDATE"
+  reporterUserId      String? @map("reporter_user_id")
+  reporterCandidateId String? @map("reporter_candidate_id")
+  reason         String    @db.Text
+  createdAt      DateTime  @default(now()) @map("created_at")
+  resolvedAt     DateTime? @map("resolved_at")
+
+  conversation    Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  reporterUser      User?      @relation(fields: [reporterUserId], references: [id], onDelete: SetNull)
+  reporterCandidate Candidate? @relation(fields: [reporterCandidateId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId])
+  @@index([resolvedAt])
+  @@map("conversation_reports")
+}
+
+/// Paramètres fiscaux par entreprise — taux et tranches modifiables, jamais
+/// codés en dur dans les calculs. Valeurs par défaut alignées sur le
+/// référentiel fiscal camerounais (CGI) fourni en référence, mais chaque
+/// entreprise peut les ajuster (autre pays OHADA, évolution de la loi de
+/// finances annuelle — voir GUIDE FISCAL OHADA du modèle source).
+model TaxSettings {
+  id        String @id @default(uuid())
+  companyId String @unique @map("company_id")
+
+  vatStandardRate           Decimal @default(0.1925) @db.Decimal(6, 4) @map("vat_standard_rate")
+  vatExportRate             Decimal @default(0) @db.Decimal(6, 4) @map("vat_export_rate")
+  corporateTaxRate          Decimal @default(0.30) @db.Decimal(6, 4) @map("corporate_tax_rate")
+  corporateTaxMinRate       Decimal @default(0.01) @db.Decimal(6, 4) @map("corporate_tax_min_rate") // BAIOP
+  corporateTaxInstallmentRate Decimal @default(0.25) @db.Decimal(6, 4) @map("corporate_tax_installment_rate")
+  businessLicenseRate       Decimal @default(0.011) @db.Decimal(6, 4) @map("business_license_rate")
+  socialContribEmployerRate Decimal @default(0.142) @db.Decimal(6, 4) @map("social_contrib_employer_rate")
+  socialContribEmployeeRate Decimal @default(0.042) @db.Decimal(6, 4) @map("social_contrib_employee_rate")
+  vocationalTrainingRate    Decimal @default(0.01) @db.Decimal(6, 4) @map("vocational_training_rate") // FAC
+  withholdingTaxRate        Decimal @default(0.155) @db.Decimal(6, 4) @map("withholding_tax_rate") // TSR sur prestataires
+
+  // Barème IR progressif — 4 tranches, la dernière n'a pas de seuil haut
+  incomeTaxAllowanceRate    Decimal @default(0.30) @db.Decimal(6, 4) @map("income_tax_allowance_rate")
+  incomeTaxBracket1Threshold Decimal @default(2000000) @db.Decimal(14, 2) @map("income_tax_bracket1_threshold")
+  incomeTaxBracket1Rate     Decimal @default(0.10) @db.Decimal(6, 4) @map("income_tax_bracket1_rate")
+  incomeTaxBracket2Threshold Decimal @default(3000000) @db.Decimal(14, 2) @map("income_tax_bracket2_threshold")
+  incomeTaxBracket2Rate     Decimal @default(0.165) @db.Decimal(6, 4) @map("income_tax_bracket2_rate")
+  incomeTaxBracket3Threshold Decimal @default(5000000) @db.Decimal(14, 2) @map("income_tax_bracket3_threshold")
+  incomeTaxBracket3Rate     Decimal @default(0.25) @db.Decimal(6, 4) @map("income_tax_bracket3_rate")
+  incomeTaxBracket4Rate     Decimal @default(0.35) @db.Decimal(6, 4) @map("income_tax_bracket4_rate")
+
+  corporateTaxMinThreshold  Decimal @default(2000000) @db.Decimal(14, 2) @map("corporate_tax_min_threshold")
+  vatMandatoryThreshold     Decimal @default(50000000) @db.Decimal(14, 2) @map("vat_mandatory_threshold")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("tax_settings")
+}
+
+/// Déclaration TVA mensuelle — seules les données saisies (CA TTC, achats
+/// TTC) sont stockées ; TVA collectée/déductible/nette et crédit reporté
+/// sont dérivés en service à partir de TaxSettings, jamais stockés comme
+/// colonnes redondantes qui pourraient diverger des taux réellement
+/// appliqués si ceux-ci changent après coup.
+model MonthlyVatReturn {
+  id              String   @id @default(uuid())
+  companyId       String   @map("company_id")
+  period          DateTime @map("period") // premier jour du mois concerné
+  salesIncTax     Decimal  @default(0) @db.Decimal(14, 2) @map("sales_inc_tax") // CA TTC
+  purchasesIncTax Decimal  @default(0) @db.Decimal(14, 2) @map("purchases_inc_tax") // achats TTC déductibles
+  status          String   @default("À déclarer") // "À déclarer" | "Déclarée" | "Payée"
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, period])
+  @@index([companyId])
+  @@map("monthly_vat_returns")
+}
+
+/// Impôt sur les sociétés — un enregistrement par exercice fiscal. Le
+/// résultat fiscal, l'IS dû (MAX du calcul normal et du BAIOP), et le solde
+/// des acomptes sont tous dérivés en service à partir de ces saisies.
+model CorporateTaxReturn {
+  id                   String   @id @default(uuid())
+  companyId            String   @map("company_id")
+  fiscalYear           Int      @map("fiscal_year")
+  accountingResult     Decimal  @default(0) @db.Decimal(14, 2) @map("accounting_result")
+  fiscalReintegrations Decimal  @default(0) @db.Decimal(14, 2) @map("fiscal_reintegrations")
+  fiscalDeductions     Decimal  @default(0) @db.Decimal(14, 2) @map("fiscal_deductions")
+  priorYearLoss        Decimal  @default(0) @db.Decimal(14, 2) @map("prior_year_loss")
+  annualRevenue        Decimal  @default(0) @db.Decimal(14, 2) @map("annual_revenue") // CA HT annuel, base du BAIOP
+  priorYearTax         Decimal  @default(0) @db.Decimal(14, 2) @map("prior_year_tax") // IS N-1, base des acomptes
+  taxCredits           Decimal  @default(0) @db.Decimal(14, 2) @map("tax_credits")
+  installmentsPaidQ1   Decimal  @default(0) @db.Decimal(14, 2) @map("installments_paid_q1")
+  installmentsPaidQ2   Decimal  @default(0) @db.Decimal(14, 2) @map("installments_paid_q2")
+  installmentsPaidQ3   Decimal  @default(0) @db.Decimal(14, 2) @map("installments_paid_q3")
+  installmentsPaidQ4   Decimal  @default(0) @db.Decimal(14, 2) @map("installments_paid_q4")
+  createdAt            DateTime @default(now()) @map("created_at")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, fiscalYear])
+  @@index([companyId])
+  @@map("corporate_tax_returns")
+}
+
+/// Patente annuelle — droit proportionnel dérivé (CA × taux, TaxSettings),
+/// droit fixe saisi manuellement (dépend d'une catégorie/barème, pas d'un
+/// pourcentage calculable).
+model BusinessLicenseReturn {
+  id            String   @id @default(uuid())
+  companyId     String   @map("company_id")
+  fiscalYear    Int      @map("fiscal_year")
+  annualRevenue Decimal  @default(0) @db.Decimal(14, 2) @map("annual_revenue")
+  fixedDuty     Decimal  @default(0) @db.Decimal(14, 2) @map("fixed_duty")
+  paid          Boolean  @default(false)
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, fiscalYear])
+  @@index([companyId])
+  @@map("business_license_returns")
+}
+
+/// CNPS (patronal + salarial + FAC) et IR sur salaires partagent la même
+/// donnée source — la masse salariale brute mensuelle (voir le modèle
+/// source : les deux onglets CNPS et IR SUR SALAIRES saisissent la même
+/// "MASSE SAL. BRUTE") — fusionnés en une seule table plutôt que dupliqués,
+/// tous les montants dérivés en service à partir de TaxSettings.
+model MonthlyPayrollTax {
+  id           String   @id @default(uuid())
+  companyId    String   @map("company_id")
+  period       DateTime @map("period")
+  grossPayroll Decimal  @default(0) @db.Decimal(14, 2) @map("gross_payroll")
+  paid         Boolean  @default(false)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, period])
+  @@index([companyId])
+  @@map("monthly_payroll_taxes")
+}

@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>
+      FINAKOM — Gestion, recrutement et réseau pour entreprises OHADA
+    </title>
+    <meta
+      name="description"
+      content="FINAKOM réunit gestion financière SYSCOHADA, recrutement et messagerie professionnelle pour les entreprises et candidats de l'espace OHADA."
+    />
+    <meta name="robots" content="index, follow" />
+    <link rel="canonical" href="https://finakom.app/" />
+
+    <!-- Balises de partage social par défaut (page d'accueil) — filet de
+         sécurité pour les robots qui n'exécutent pas JavaScript (la plupart
+         des robots de réseaux sociaux) : usePageMeta.ts affine ces valeurs
+         par page une fois React monté, pour les crawlers qui, eux,
+         exécutent le JS (Google notamment). -->
+    <meta
+      property="og:title"
+      content="FINAKOM — Gestion, recrutement et réseau pour entreprises OHADA"
+    />
+    <meta
+      property="og:description"
+      content="FINAKOM réunit gestion financière SYSCOHADA, recrutement et messagerie professionnelle pour les entreprises et candidats de l'espace OHADA."
+    />
+    <meta property="og:url" content="https://finakom.app/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="FINAKOM" />
+    <meta property="og:locale" content="fr_FR" />
+    <meta property="og:image" content="https://finakom.app/og-image.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta
+      name="twitter:title"
+      content="FINAKOM — Gestion, recrutement et réseau pour entreprises OHADA"
+    />
+    <meta
+      name="twitter:description"
+      content="FINAKOM réunit gestion financière SYSCOHADA, recrutement et messagerie professionnelle pour les entreprises et candidats de l'espace OHADA."
+    />
+    <meta name="twitter:image" content="https://finakom.app/og-image.png" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;1,9..144,500&family=Inter:wght@400;500;600;700;800&family=IBM+Plex+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+  </head>
+  <body>
+    <script>
+      // Applique la palette de couleur sauvegardée avant le premier rendu React,
+      // pour éviter un flash du thème par défaut (même principe que next-themes
+      // pour le mode clair/sombre, géré lui séparément).
+      (function () {
+        try {
+          var stored = localStorage.getItem("finakom_color_theme");
+          if (stored)
+            document.documentElement.setAttribute("data-color-theme", stored);
+        } catch (e) {}
+      })();
+    </script>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

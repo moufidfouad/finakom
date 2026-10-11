@@ -1,0 +1,9 @@
+User-agent: *
+Allow: /
+
+Disallow: /app/
+Disallow: /reinitialiser-mot-de-passe
+Disallow: /verifier-email
+Disallow: /annuaire-cv
+
+Sitemap: https://finakom.app/sitemap.xml

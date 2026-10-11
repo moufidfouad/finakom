@@ -1,0 +1,55 @@
+export const INFLOW_CATEGORIES = [
+  "Ventes comptant",
+  "Règlements clients",
+  "Acomptes reçus",
+  "Remboursements TVA",
+  "Emprunts reçus",
+  "Apports associés",
+  "Subventions",
+  "Produits financiers",
+  "Cessions actifs",
+  "Autres encaissements",
+];
+export const OUTFLOW_CATEGORIES = [
+  "Achats fournisseurs",
+  "Salaires & charges sociales",
+  "CNPS versé",
+  "Loyers & charges locatives",
+  "TVA versée DGI",
+  "IS & Patente",
+  "Remboursements emprunts",
+  "Investissements & acquisitions",
+  "Frais généraux",
+  "Publicité & marketing",
+  "Autres décaissements",
+];
+export const SUPPORTS = [
+  "Caisse",
+  "Banque",
+  "Orange Money",
+  "MTN MoMo",
+  "Wave",
+];
+export const PAYMENT_METHODS = [
+  "Virement",
+  "Espèces",
+  "Chèque",
+  "Orange Money",
+  "MTN MoMo",
+  "Wave",
+  "Prélèvement auto",
+];
+export const MONTH_LABELS = [
+  "Jan",
+  "Fév",
+  "Mar",
+  "Avr",
+  "Mai",
+  "Jun",
+  "Jul",
+  "Aoû",
+  "Sep",
+  "Oct",
+  "Nov",
+  "Déc",
+];
